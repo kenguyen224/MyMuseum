@@ -1,0 +1,13 @@
+<resources>
+    <string name="app_name">MyMuseum</string>
+    <string name="bluetooth_disabled">Bluetooth disabled</string>
+    <string name="start_scan">START SCANNING</string>
+    <string name="stop_scan">STOP SCANNING</string>
+    <string name="turning_off_bluetooth">Turning Bluetooth off…</string>
+    <string name="turning_on_bluetooth">Turning Bluetooth on…</string>
+    <string name="scanning">Scanning …</string>
+    <string name="scan_stopped">Scan Stop</string>
+    <string name="enable">Enable</string>
+    <string name="location_permission_denied">Please enable location permission from settings to use the bluetooth</string>
+    <string name="no_beacon_detect">no beacon detect</string>
+</resources>
