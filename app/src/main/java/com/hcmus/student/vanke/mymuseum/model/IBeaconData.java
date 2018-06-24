@@ -1,4 +1,4 @@
-package com.hcmus.student.vanke.mymuseum;
+package com.hcmus.student.vanke.mymuseum.model;
 
 import com.google.gson.annotations.SerializedName;
 
@@ -8,13 +8,13 @@ import com.google.gson.annotations.SerializedName;
 
 public class IBeaconData {
     @SerializedName("uuid")
-    String uuid  = null;
+    String uuid = null;
     @SerializedName("major")
-    String major  = null;
+    String major = null;
     @SerializedName("minor")
     String minor = null;
 
-    IBeaconData ( String id1, String id2, String id3) {
+    IBeaconData(String id1, String id2, String id3) {
         uuid = id1;
         major = id2;
         minor = id3;

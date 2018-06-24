@@ -1,4 +1,4 @@
-package com.hcmus.student.vanke.mymuseum;
+package com.hcmus.student.vanke.mymuseum.event;
 
 import org.altbeacon.beacon.Beacon;
 

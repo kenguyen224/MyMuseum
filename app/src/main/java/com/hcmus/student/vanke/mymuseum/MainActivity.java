@@ -9,12 +9,14 @@ import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.PackageManager;
+import android.content.res.Resources;
+import android.graphics.drawable.Drawable;
 import android.os.Build;
+import android.os.Bundle;
 import android.os.RemoteException;
 import android.support.annotation.NonNull;
 import android.support.v4.app.ActivityCompat;
 import android.support.v7.app.AppCompatActivity;
-import android.os.Bundle;
 import android.support.v7.widget.Toolbar;
 import android.util.Log;
 import android.view.Gravity;
@@ -32,6 +34,10 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import com.github.ybq.android.spinkit.style.DoubleBounce;
+import com.hcmus.student.vanke.mymuseum.api.GetMuseumInfoService;
+import com.hcmus.student.vanke.mymuseum.api.RetrofitInstance;
+import com.hcmus.student.vanke.mymuseum.event.RangeBeaconEvent;
+import com.hcmus.student.vanke.mymuseum.model.MuseumDataObject;
 import com.jakewharton.rxrelay2.PublishRelay;
 import com.jakewharton.rxrelay2.Relay;
 
@@ -49,6 +55,9 @@ import io.reactivex.android.schedulers.AndroidSchedulers;
 import io.reactivex.disposables.CompositeDisposable;
 import io.reactivex.disposables.Disposable;
 import pub.devrel.easypermissions.EasyPermissions;
+import retrofit2.Call;
+import retrofit2.Callback;
+import retrofit2.Response;
 
 public class MainActivity extends AppCompatActivity implements BeaconConsumer,
         EasyPermissions.PermissionCallbacks
@@ -73,7 +82,7 @@ public class MainActivity extends AppCompatActivity implements BeaconConsumer,
     Disposable disposable;
     final CompositeDisposable subscription = new CompositeDisposable();
 
-
+    private GetMuseumInfoService getMuseumInfoService;
 
     private final BroadcastReceiver mReceiver = new BroadcastReceiver() {
         @Override
@@ -117,6 +126,8 @@ public class MainActivity extends AppCompatActivity implements BeaconConsumer,
         toolbar = findViewById(R.id.my_toolbar);
         //linearLayout = findViewById(R.id.popup_layout);
 
+        //create service api
+        getMuseumInfoService = RetrofitInstance.getRetrofitInstance().create(GetMuseumInfoService.class);
 
         setSupportActionBar(toolbar);
 
@@ -252,24 +263,71 @@ public class MainActivity extends AppCompatActivity implements BeaconConsumer,
                 }
             }
             mBeacon = goodBeacon;
-            if(mPopupWindow.isShowing()){
-                String message = mBeacon.getBluetoothName() + "\n" + mBeacon.getId2() + "\n"
-                        + mBeacon.getId3();
-                tvPictureInfo.setText(message);
-                if(mBeacon.getBluetoothName().contains("1")){
-                    imgPicture.setImageDrawable(getResources().getDrawable(R.drawable.number_one));
-                } else if(mBeacon.getBluetoothName().contains("2")){
-                    imgPicture.setImageDrawable(getResources().getDrawable(R.drawable.number_two));
-                }else if(mBeacon.getBluetoothName().contains("3")){
-                    imgPicture.setImageDrawable(getResources().getDrawable(R.drawable.number_three));
-                }
+            String major = "", minor = ""; //hex string of major and minor of beacon
+            if (mBeacon != null) {
+                //major = Long.toHexString(mBeacon.getId2());
+                major = mBeacon.getId2().toHexString();
+                major = major.substring(major.length() - 4);
+
+                minor = mBeacon.getId3().toHexString();
+                minor = minor.substring(minor.length() - 4);
             }
+            Call<MuseumDataObject> callApi = getMuseumInfoService.getMuseumInfo(major, minor);
+            Log.d("URL called", callApi.request().url().toString());
+
+            callApi.enqueue(new Callback<MuseumDataObject>() {
+                @Override
+                public void onResponse(Call<MuseumDataObject> call, Response<MuseumDataObject> response) {
+                    String name = response.body().name;
+                    String info = response.body().info;
+                    if (mPopupWindow.isShowing()) {
+                        try {
+                            Drawable drawable = getImageResource(name);
+                            if (drawable != null) {
+                                imgPicture.setImageDrawable(drawable);
+                                tvPictureInfo.setText(info);
+                            } else {
+                                tvPictureInfo.setText("not found!");
+                            }
+                        } catch (NoSuchFieldException | IllegalAccessException e) {
+                            e.printStackTrace();
+                        }
+                    }
+                }
+
+                @Override
+                public void onFailure(Call<MuseumDataObject> call, Throwable t) {
+                    Toast.makeText(getApplicationContext(), "call api failure", Toast.LENGTH_SHORT).show();
+                    /*if(mPopupWindow.isShowing()){
+                        String message = mBeacon.getBluetoothName() + "\n" + mBeacon.getId2() + "\n"
+                                + mBeacon.getId3();
+                        tvPictureInfo.setText(message);
+                        if(mBeacon.getBluetoothName().contains("1")){
+                            imgPicture.setImageDrawable(getResources().getDrawable(R.drawable.number_one));
+                        } else if(mBeacon.getBluetoothName().contains("2")){
+                            imgPicture.setImageDrawable(getResources().getDrawable(R.drawable.number_two));
+                        }else if(mBeacon.getBluetoothName().contains("3")){
+                            imgPicture.setImageDrawable(getResources().getDrawable(R.drawable.number_three));
+                        }
+                    }*/
+                }
+            });
 
         } else {
             if(mPopupWindow.isShowing()){
                 tvPictureInfo.setText("no beacon detected");
                 imgPicture.setImageDrawable(getResources().getDrawable(R.drawable.place_holder));
             }
+        }
+    }
+
+    Drawable getImageResource(String name) throws NoSuchFieldException, IllegalAccessException {
+        int id = getApplicationContext().getResources().getIdentifier(name,
+                "drawable", getApplicationContext().getPackageName());
+        try {
+            return getResources().getDrawable(id);
+        } catch (Resources.NotFoundException ex) {
+            return null;
         }
     }
 
