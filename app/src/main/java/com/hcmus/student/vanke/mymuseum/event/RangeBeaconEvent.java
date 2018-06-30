@@ -1,6 +1,7 @@
 package com.hcmus.student.vanke.mymuseum.event;
 
 import org.altbeacon.beacon.Beacon;
+import org.altbeacon.beacon.MonitorNotifier;
 import org.altbeacon.beacon.Region;
 
 import java.util.Collection;

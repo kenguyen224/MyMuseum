@@ -8,12 +8,14 @@ import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.content.res.Resources;
 import android.graphics.drawable.Drawable;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.RemoteException;
+import android.preference.PreferenceManager;
 import android.support.annotation.NonNull;
 import android.support.v4.app.ActivityCompat;
 import android.support.v7.app.AppCompatActivity;
@@ -34,10 +36,13 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import com.github.ybq.android.spinkit.style.DoubleBounce;
-import com.hcmus.student.vanke.mymuseum.api.GetMuseumInfoService;
+import com.google.gson.Gson;
+import com.hcmus.student.vanke.mymuseum.api.GetMuseumDataService;
 import com.hcmus.student.vanke.mymuseum.api.RetrofitInstance;
 import com.hcmus.student.vanke.mymuseum.event.RangeBeaconEvent;
+import com.hcmus.student.vanke.mymuseum.model.MuseumData;
 import com.hcmus.student.vanke.mymuseum.model.MuseumDataObject;
+import com.hcmus.student.vanke.mymuseum.resource.ResourceHelper;
 import com.jakewharton.rxrelay2.PublishRelay;
 import com.jakewharton.rxrelay2.Relay;
 
@@ -45,19 +50,22 @@ import org.altbeacon.beacon.Beacon;
 import org.altbeacon.beacon.BeaconConsumer;
 import org.altbeacon.beacon.BeaconManager;
 import org.altbeacon.beacon.BeaconParser;
+import org.altbeacon.beacon.Identifier;
 import org.altbeacon.beacon.Region;
+import org.json.JSONException;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 
 import io.reactivex.BackpressureStrategy;
 import io.reactivex.android.schedulers.AndroidSchedulers;
 import io.reactivex.disposables.CompositeDisposable;
 import io.reactivex.disposables.Disposable;
+import io.reactivex.schedulers.Schedulers;
 import pub.devrel.easypermissions.EasyPermissions;
-import retrofit2.Call;
-import retrofit2.Callback;
-import retrofit2.Response;
+
 
 public class MainActivity extends AppCompatActivity implements BeaconConsumer,
         EasyPermissions.PermissionCallbacks
@@ -81,8 +89,11 @@ public class MainActivity extends AppCompatActivity implements BeaconConsumer,
     RelativeLayout rootView;
     Disposable disposable;
     final CompositeDisposable subscription = new CompositeDisposable();
-
-    private GetMuseumInfoService getMuseumInfoService;
+    Region mRegion;
+    private SharedPreferences mSharedPreferences;
+    private GetMuseumDataService getMuseumDataService;
+    private MuseumData mMuseumData;
+    private CompositeDisposable compositeDisposable = new CompositeDisposable();
 
     private final BroadcastReceiver mReceiver = new BroadcastReceiver() {
         @Override
@@ -115,8 +126,8 @@ public class MainActivity extends AppCompatActivity implements BeaconConsumer,
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_scanning);
-        /*Intent intent = new Intent(this, ScanningActivity.class);
-        this.startActivity(intent);*/
+
+        mSharedPreferences = PreferenceManager.getDefaultSharedPreferences(this);
         progressBar = findViewById(R.id.progress);
         tvStatusBLT = findViewById(R.id.tvStatusBLT);
         btnTurnOnBluetooth = findViewById(R.id.btnTurnOnBluetooth);
@@ -124,10 +135,14 @@ public class MainActivity extends AppCompatActivity implements BeaconConsumer,
         progressBar.setIndeterminateDrawable(doubleBounce);
         rootView = findViewById(R.id.activity_scanning);
         toolbar = findViewById(R.id.my_toolbar);
-        //linearLayout = findViewById(R.id.popup_layout);
+        UUID uuid = UUID.fromString("11111111-1111-1111-1111-111111111111");
+        mRegion = new
+                Region("com.hcmus.student.vanke.mymuseum", Identifier.fromUuid(uuid), null, null);
 
         //create service api
-        getMuseumInfoService = RetrofitInstance.getRetrofitInstance().create(GetMuseumInfoService.class);
+        getMuseumDataService = RetrofitInstance.getRetrofitInstance().create(GetMuseumDataService.class);
+
+        getMuseumData();
 
         setSupportActionBar(toolbar);
 
@@ -144,6 +159,18 @@ public class MainActivity extends AppCompatActivity implements BeaconConsumer,
         registerReceiver(mReceiver, filter);
     }
 
+    private void getMuseumData() {
+        Disposable disposable = getMuseumDataService.getMuseumData()
+                .doOnSubscribe(x -> Log.d("MainActivity", "call api get museum data"))
+                .subscribeOn(Schedulers.io())
+                .observeOn(AndroidSchedulers.mainThread())
+                //.doOnNext(museumData -> mMuseumData = museumData)
+                .doOnComplete(() -> Toast.makeText(getApplicationContext(),
+                        "get app data complete!", Toast.LENGTH_SHORT).show())
+                .subscribe(this::saveMuseumData, this::getMuseumDataError);
+
+        compositeDisposable.add(disposable);
+    }
     @Override
     public boolean onCreateOptionsMenu(Menu menu) {
         getMenuInflater().inflate(R.menu.menu_main, menu);
@@ -165,8 +192,7 @@ public class MainActivity extends AppCompatActivity implements BeaconConsumer,
     void initBeaconManager() {
         mBeaconManager = BeaconManager.getInstanceForApplication(this);
         // Sets the delay between each scans according to the settings
-        mBeaconManager.setForegroundBetweenScanPeriod(200);
-
+        mBeaconManager.setForegroundBetweenScanPeriod(100L);
         // add only i-beacon to discover
         mBeaconManager.getBeaconParsers().add(new BeaconParser().setBeaconLayout(IBEACON_LAYOUT));
     }
@@ -211,11 +237,16 @@ public class MainActivity extends AppCompatActivity implements BeaconConsumer,
                 .observeOn(AndroidSchedulers.mainThread())
                 .doOnSubscribe(e -> Log.d("xxx", "subscribe success!"))
                 .filter(e -> e instanceof RangeBeaconEvent && !((RangeBeaconEvent) e).beacons.isEmpty())
-                .subscribe(e -> handleScanResult((RangeBeaconEvent) e));
+                .subscribe(this::handleScanResult, this::handleScanError);
         subscription.add(disposable);
     }
 
-    void handleScanResult(RangeBeaconEvent result) {
+    void handleScanError(Throwable e) {
+        Toast.makeText(this, "scan error", Toast.LENGTH_SHORT).show();
+    }
+
+    void handleScanResult(Object o) {
+        RangeBeaconEvent result = (RangeBeaconEvent) o;
         Log.d("xxx | onSubscribe","Handle Scan result");
         //Collection<Beacon> beacons = result.beacons;
         ArrayList<Beacon> beacons = new ArrayList<>(result.beacons);
@@ -272,46 +303,43 @@ public class MainActivity extends AppCompatActivity implements BeaconConsumer,
                 minor = mBeacon.getId3().toHexString();
                 minor = minor.substring(minor.length() - 4);
             }
-            Call<MuseumDataObject> callApi = getMuseumInfoService.getMuseumInfo(major, minor);
-            Log.d("URL called", callApi.request().url().toString());
-
-            callApi.enqueue(new Callback<MuseumDataObject>() {
-                @Override
-                public void onResponse(Call<MuseumDataObject> call, Response<MuseumDataObject> response) {
-                    String name = response.body().name;
-                    String info = response.body().info;
-                    if (mPopupWindow.isShowing()) {
-                        try {
-                            Drawable drawable = getImageResource(name);
-                            if (drawable != null) {
-                                imgPicture.setImageDrawable(drawable);
-                                tvPictureInfo.setText(info);
-                            } else {
-                                tvPictureInfo.setText("not found!");
-                            }
-                        } catch (NoSuchFieldException | IllegalAccessException e) {
-                            e.printStackTrace();
+            MuseumDataObject museumDataObject = getMuseumDataObjectFromTag(major, minor);
+            if (museumDataObject == null) {
+                String messageError = "beacon info not found with major: %s minor: %s";
+                messageError = String.format(messageError, major, minor);
+                Toast.makeText(this, messageError, Toast.LENGTH_SHORT).show();
+                /*if (mPopupWindow.isShowing()) {
+                    if (mBeacon.getBluetoothName() == null || mBeacon.getBluetoothName().isEmpty()) {
+                        return;
+                    }
+                    String message = mBeacon.getBluetoothName() + "\n" + mBeacon.getId2() + "\n"
+                            + mBeacon.getId3();
+                    tvPictureInfo.setText(message);
+                    if (mBeacon.getBluetoothName().contains("1")) {
+                        imgPicture.setImageDrawable(getResources().getDrawable(R.drawable.number_one));
+                    } else if (mBeacon.getBluetoothName().contains("2")) {
+                        imgPicture.setImageDrawable(getResources().getDrawable(R.drawable.number_two));
+                    } else if (mBeacon.getBluetoothName().contains("3")) {
+                        imgPicture.setImageDrawable(getResources().getDrawable(R.drawable.number_three));
+                    }
+                }*/
+            } else {
+                String name = museumDataObject.name;
+                String info = museumDataObject.info;
+                if (mPopupWindow.isShowing()) {
+                    try {
+                        Drawable drawable = getImageResource(name);
+                        if (drawable != null) {
+                            imgPicture.setImageDrawable(drawable);
+                            tvPictureInfo.setText(info);
+                        } else {
+                            tvPictureInfo.setText("image resource not found");
                         }
+                    } catch (NoSuchFieldException | IllegalAccessException e) {
+                        e.printStackTrace();
                     }
                 }
-
-                @Override
-                public void onFailure(Call<MuseumDataObject> call, Throwable t) {
-                    Toast.makeText(getApplicationContext(), "call api failure", Toast.LENGTH_SHORT).show();
-                    /*if(mPopupWindow.isShowing()){
-                        String message = mBeacon.getBluetoothName() + "\n" + mBeacon.getId2() + "\n"
-                                + mBeacon.getId3();
-                        tvPictureInfo.setText(message);
-                        if(mBeacon.getBluetoothName().contains("1")){
-                            imgPicture.setImageDrawable(getResources().getDrawable(R.drawable.number_one));
-                        } else if(mBeacon.getBluetoothName().contains("2")){
-                            imgPicture.setImageDrawable(getResources().getDrawable(R.drawable.number_two));
-                        }else if(mBeacon.getBluetoothName().contains("3")){
-                            imgPicture.setImageDrawable(getResources().getDrawable(R.drawable.number_three));
-                        }
-                    }*/
-                }
-            });
+            }
 
         } else {
             if(mPopupWindow.isShowing()){
@@ -319,6 +347,24 @@ public class MainActivity extends AppCompatActivity implements BeaconConsumer,
                 imgPicture.setImageDrawable(getResources().getDrawable(R.drawable.place_holder));
             }
         }
+    }
+
+    private MuseumDataObject getMuseumDataObjectFromTag(String major, String minor) {
+        if (!isAvailableTag(major, minor)) {
+            return null;
+        }
+        if (mMuseumData != null && !mMuseumData.listMuseumDataObjects.isEmpty()) {
+            for (MuseumDataObject object : mMuseumData.listMuseumDataObjects) {
+                if (object.major.equals(major) && object.minor.equals(minor)) {
+                    return object;
+                }
+            }
+        }
+        return null;
+    }
+
+    private boolean isAvailableTag(String major, String minor) {
+        return major != null && !major.isEmpty() && minor != null && !minor.isEmpty();
     }
 
     Drawable getImageResource(String name) throws NoSuchFieldException, IllegalAccessException {
@@ -380,6 +426,12 @@ public class MainActivity extends AppCompatActivity implements BeaconConsumer,
     @Override
     protected void onDestroy() {
         super.onDestroy();
+        try {
+            mBeaconManager.stopMonitoringBeaconsInRegion(mRegion);
+        } catch (RemoteException e) {
+            Log.e("onDestroy", e.getMessage());
+        }
+        mBeaconManager.unbind(this);
         unregisterReceiver(mReceiver);
     }
 
@@ -404,8 +456,8 @@ public class MainActivity extends AppCompatActivity implements BeaconConsumer,
         } );
 
         try {
-            mBeaconManager.startRangingBeaconsInRegion(new
-                    Region("com.hcmus.student.vanke.mymuseum", null, null, null));
+            //uuid of beacon
+            mBeaconManager.startRangingBeaconsInRegion(mRegion);
         } catch (RemoteException e) {
             e.printStackTrace();
         }
@@ -449,5 +501,20 @@ public class MainActivity extends AppCompatActivity implements BeaconConsumer,
             mBeacon = null;
             tvPictureInfo.setText("null");
         }
+    }
+
+    private void saveMuseumData(MuseumData museumData) throws JSONException {
+        this.mMuseumData = museumData;
+        Gson gson = new Gson();
+        String json = gson.toJson(mMuseumData, MuseumData.class);
+
+        SharedPreferences.Editor editor = mSharedPreferences.edit();
+        editor.putString("museumdata", json);
+        editor.apply();
+    }
+
+    private void getMuseumDataError(Throwable e) throws IOException, JSONException {
+        Toast.makeText(this, "Get Museum data error, read data from local", Toast.LENGTH_SHORT).show();
+        mMuseumData = ResourceHelper.getMuseumDataFromAsset(this, mSharedPreferences);
     }
 }
